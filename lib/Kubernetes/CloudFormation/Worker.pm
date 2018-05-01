@@ -1,17 +1,34 @@
+package KubeCtl::Result {
+  use Moose;
+  has output => (is => 'ro', isa => 'Str');
+  has rc => (is => 'ro', isa => 'Int', required => 1);
+  
+  has success => (is => 'ro', isa => 'Bool', lazy => 1, default => sub {
+    my $self = shift;
+    return $self->rc == 0;
+  });
+}
 package Kubernetes::CloudFormation::Worker {
   our $VERSION = '0.01';
   use Moose;
-  with 'SQS::Worker', 'SQS::Worker::CloudFormationResource';
+  with 'SQS::Worker', 'SQS::Worker::SNS', 'SQS::Worker::CloudFormationResource';
+
+  use JSON::MaybeXS;
 
   use IPC::Open3;
+
+  has _json => (is => 'ro', default => sub {
+    my $self = shift;
+    JSON::MaybeXS->new;
+  });
 
   has kubectl => (is => 'ro', isa => 'Str', default => 'kubectl');
 
   sub send_command {
-    my ($self, $command, $input) = @_;
+    my ($self, $input, @kubectl_params) = @_;
     
     my ($in, $out, $err);
-    my $pid = open3($in, $out, $err, $self->kubectl, $command, '-f', '-');
+    my $pid = open3($in, $out, $err, $self->kubectl, @kubectl_params);
     print $in $input if (defined $input);
     close $in;
     my $output = join '', <$out>;
@@ -19,25 +36,44 @@ package Kubernetes::CloudFormation::Worker {
     waitpid( $pid, 0 );
     my $rc = $? >> 8;
 
-    die "Error from kubernetes: $output" if ($rc != 0);
-    return $output;
+    return KubeCtl::Result->new(
+      rc => $rc,
+      output => $output
+    );
   }
 
   sub create_resource {
     my ($self, $request, $response) = @_;
-    $self->send_command('create -f -');
 
+    my $json = $self->_json->encode($request->ResourceProperties);
+    my $result = $self->send_command($json, 'create', '-f', '-');
+    if (not $result->success) {
+      $response->Status('FAILED');
+      $response->Reason($result->output);
+      die "Failed " . $result->output;
+    } else {
+      $response->Status('SUCCESS');
+      #$response->Data({ });
+    }
+    print Dumper($response);
   }
 
   sub update_resource {
     my ($self, $request, $response) = @_;
-    $self->send_command('apply', ...);
-
+    #$self->send_command('apply', ...);
   }
 
   sub delete_resource {
     my ($self, $request, $response) = @_;
 
+    my $result = $self->send_command(undef, 'delete', $request->PhysicalResourceId);
+    if (not $result->success) {
+      $response->Status('FAILED');
+      $response->Reason($result->output);
+    } else {
+      $response->Status('SUCCESS');
+      #$response->Data({ });
+    }
   } 
 
   __PACKAGE__->meta->make_immutable;
