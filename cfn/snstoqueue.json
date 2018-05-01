@@ -1,0 +1,88 @@
+{
+  "AWSTemplateFormatVersion":"2010-09-09",
+  "Description":"This Template creates an Amazon SNS topic that sends messages to an Amazon SQS queue",
+  "Resources":{
+    "SNSTopic":{
+      "Type":"AWS::SNS::Topic",
+      "Properties":{
+        "Subscription":[ 
+          {
+            "Endpoint":{"Fn::GetAtt":["CfnQueue","Arn"]},
+            "Protocol":"sqs"
+          }
+        ]
+      } 
+    },
+    "CfnQueue":{
+      "Type":"AWS::SQS::Queue"
+    },
+    "QueuePolicy":{
+      "Type":"AWS::SQS::QueuePolicy",
+      "Properties":{        
+        "PolicyDocument":{
+          "Version":"2012-10-17",
+          "Id":"QueuePolicy",
+          "Statement":[
+            {
+              "Sid":"Allow-SendMessage-Queue-From-SNS-Topic",
+	      "Effect":"Allow",           
+	      "Principal":"*",
+ 	      "Action":["sqs:SendMessage"],
+	      "Resource":"*",
+              "Condition":{
+                "ArnEquals":{
+                  "aws:SourceArn":{"Ref":"SNSTopic"}
+                }
+              }
+            }
+          ]
+        },
+        "Queues":[{"Ref":"CfnQueue"}]
+      }
+    },
+    "CfnQueueUser":{
+     "Type":"AWS::IAM::User",
+     "Properties": { 
+       "Policies": [
+          {
+            "PolicyName":"GetMessagePolicy",
+            "PolicyDocument":{
+            "Version":"2012-10-17",
+            "Statement":[
+              {
+                "Effect":"Allow",
+ 	        "Action":[
+                  "sqs:DeleteMessage",
+                  "sqs:ReceiveMessage"
+                ],
+                "Resource":[
+                  {"Fn::GetAtt":["CfnQueue","Arn"]}
+                ] 
+              }
+            ]}
+          }
+        ]
+      }
+    },
+    "CfnQueueUserKey":{
+     "Type":"AWS::IAM::AccessKey",
+     "Properties":{
+          "UserName":{"Ref":"CfnQueueUser"}
+      }
+    }
+  },
+  "Outputs":{
+    "ServiceToken":{
+      "Value":{"Ref":"SNSTopic"}  
+    },
+    "Queue":{
+      "Value": {"Ref":"CfnQueue"}
+    },
+    "AccessKey": {
+      "Value": {"Ref":"CfnQueueUserKey"}
+    },
+    "SecretKey": {
+      "Value": {"Fn::GetAtt":["CfnQueueUserKey","SecretAccessKey"]}
+    }
+  }
+}
