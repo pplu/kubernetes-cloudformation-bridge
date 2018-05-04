@@ -56,15 +56,18 @@ package Kubernetes::CloudFormation::Worker {
     my $object = $k8s->struct_to_object($k8s_info->{ params_class }, $request->ResourceProperties);
 
     # TODO: validate kind
+    my $name = $object->metadata->name;
 
     my $json = $k8s->object_to_json($object);
     my $result = $self->send_command($json, 'create', '-f', '-');
+
+    my $id = $self->make_physical_resource_id($k8s_info->{ kind }, '0000-0000-00000000000000000000', $name);
+
     if (not $result->success) {
       $response->Status('FAILED');
       $response->Reason($result->output);
-      die "Failed " . $result->output;
     } else {
-      $response->PhysicalResourceId($name);
+      $response->PhysicalResourceId($id);
       $response->Status('SUCCESS');
       $response->Data({
         Name => $name,
@@ -77,16 +80,28 @@ package Kubernetes::CloudFormation::Worker {
     #$self->send_command('apply', ...);
   }
 
+  sub make_physical_resource_id {
+    my ($self, $type, $uid, $name) = @_;
+    return join '|', $type, $uid, $name;
+  }
+
+  sub split_physical_resource_id {
+    my ($self, $resource_id) = @_;
+    my @parts = split /\|/, $resource_id;
+    die "Got an unexpected number of parts from $resource_id" if (@parts != 3);
+    return @parts;
+  }
+
   sub delete_resource {
     my ($self, $request, $response) = @_;
 
-    my $result = $self->send_command(undef, 'delete', $request->PhysicalResourceId);
+    my ($type, $uid, $name) = $self->split_physical_resource_id($request->PhysicalResourceId);
+    my $result = $self->send_command(undef, 'delete', $type, $name);
     if (not $result->success) {
       $response->Status('FAILED');
       $response->Reason($result->output);
     } else {
       $response->Status('SUCCESS');
-      #$response->Data({ });
     }
   } 
 
