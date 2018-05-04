@@ -13,14 +13,7 @@ package Kubernetes::CloudFormation::Worker {
   use Moose;
   with 'SQS::Worker', 'SQS::Worker::SNS', 'SQS::Worker::CloudFormationResource';
 
-  use JSON::MaybeXS;
-
   use IPC::Open3;
-
-  has _json => (is => 'ro', default => sub {
-    my $self = shift;
-    JSON::MaybeXS->new;
-  });
 
   has kubectl => (is => 'ro', isa => 'Str', default => 'kubectl');
 
@@ -42,20 +35,41 @@ package Kubernetes::CloudFormation::Worker {
     );
   }
 
+  use IO::K8s;
+
+  our $cf_type = {
+    'Custom::KubernetesService' => {
+      kind => 'Service',
+      params_class => 'IO::K8s::Api::Core::V1::Service',
+    },
+  };
+
   sub create_resource {
     my ($self, $request, $response) = @_;
 
-    my $json = $self->_json->encode($request->ResourceProperties);
+    my $k8s_info = $cf_type->{ $request->ResourceType };
+
+    # TODO: this should be transmitted to the user
+    die "Unknown resource type " . $request->ResourceType if (not defined $k8s_info);
+
+    my $k8s = IO::K8s->new;
+    my $object = $k8s->struct_to_object($k8s_info->{ params_class }, $request->ResourceProperties);
+
+    # TODO: validate kind
+
+    my $json = $k8s->object_to_json($object);
     my $result = $self->send_command($json, 'create', '-f', '-');
     if (not $result->success) {
       $response->Status('FAILED');
       $response->Reason($result->output);
       die "Failed " . $result->output;
     } else {
+      $response->PhysicalResourceId($name);
       $response->Status('SUCCESS');
-      #$response->Data({ });
+      $response->Data({
+        Name => $name,
+      });
     }
-    print Dumper($response);
   }
 
   sub update_resource {

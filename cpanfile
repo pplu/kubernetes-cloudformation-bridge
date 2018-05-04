@@ -1,4 +1,5 @@
 #requires 'SQS::Worker::CloudFormationResource';
+requires 'IO::K8s';
 
 on 'develop' => sub {
   requires 'Dist::Zilla';
