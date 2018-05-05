@@ -92,15 +92,14 @@ package Kubernetes::CloudFormation::Worker {
     my $result = $self->send_command($json, 'create', '-f', '-');
 
     if (not $result->success) {
-      $response->Status('FAILED');
-      $response->Reason($result->output);
+      $response->set_failed($result->output);
     } else {
       my $new_object = $self->get_object_from_kubernetes($kube_kind, $name);
 
       my $id = $self->make_physical_resource_id($kube_kind, $new_object->metadata->uid, $name);
 
       $response->PhysicalResourceId($id);
-      $response->Status('SUCCESS');
+      $response->set_success;
       $response->Data({
         Name => $name,
       });
@@ -119,20 +118,17 @@ package Kubernetes::CloudFormation::Worker {
 
     if (my $object = $self->get_object_from_kubernetes($type, $name)) {
       if ($object->metadata->uid ne $uid) {
-        $response->Status('FAILED');
-        $response->Reason('Found object with a different Kubernetes UID than expected. Not deleting');
+        $response->set_failed('Found object with a different Kubernetes UID than expected. Not deleting');
       } else {
         my $result = $self->send_command(undef, 'delete', $type, $name);
         if (not $result->success) {
-          $response->Status('FAILED');
-          $response->Reason($result->output);
+          $response->set_failed($result->output);
         } else {
-          $response->Status('SUCCESS');
+          $response->set_success;
         }
       }
     } else {
-      $response->Status('FAILED');
-      $response->Reason("Can't find $type with name $name and uid $uid for deletion");
+      $response->set_failed("Can't find $type with name $name and uid $uid for deletion");
     }
   } 
 
