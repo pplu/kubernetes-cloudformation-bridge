@@ -1,7 +1,12 @@
 package KubeCtl::Result {
   use Moose;
+  use JSON::MaybeXS;
   has output => (is => 'ro', isa => 'Str');
   has rc => (is => 'ro', isa => 'Int', required => 1);
+  has json => (is => 'ro', isa => 'HashRef', lazy => 1, default => sub {
+    my $self = shift;
+    return decode_json($self->output);
+  });
   
   has success => (is => 'ro', isa => 'Bool', lazy => 1, default => sub {
     my $self = shift;
@@ -19,7 +24,7 @@ package Kubernetes::CloudFormation::Worker {
 
   sub send_command {
     my ($self, $input, @kubectl_params) = @_;
-    
+   
     my ($in, $out, $err);
     my $pid = open3($in, $out, $err, $self->kubectl, @kubectl_params);
     print $in $input if (defined $input);
@@ -37,47 +42,24 @@ package Kubernetes::CloudFormation::Worker {
 
   use IO::K8s;
 
-  our $cf_type = {
-    'Custom::KubernetesService' => {
-      kind => 'Service',
-      params_class => 'IO::K8s::Api::Core::V1::Service',
-    },
+  our $cf_type_to_kube_kind = {
+    'Custom::KubernetesService' => 'Service'
+  };
+  our $kube_kind_to_kube_class = {
+     'Service' => 'IO::K8s::Api::Core::V1::Service',
   };
 
-  sub create_resource {
-    my ($self, $request, $response) = @_;
+  has _k8s => (is => 'ro', isa => 'IO::K8s', default => sub { IO::K8s->new });
 
-    my $k8s_info = $cf_type->{ $request->ResourceType };
-
-    # TODO: this should be transmitted to the user
-    die "Unknown resource type " . $request->ResourceType if (not defined $k8s_info);
-
-    my $k8s = IO::K8s->new;
-    my $object = $k8s->struct_to_object($k8s_info->{ params_class }, $request->ResourceProperties);
-
-    # TODO: validate kind
-    my $name = $object->metadata->name;
-
-    my $json = $k8s->object_to_json($object);
-    my $result = $self->send_command($json, 'create', '-f', '-');
-
-    my $id = $self->make_physical_resource_id($k8s_info->{ kind }, '0000-0000-00000000000000000000', $name);
-
-    if (not $result->success) {
-      $response->Status('FAILED');
-      $response->Reason($result->output);
+  sub get_object_from_kubernetes {
+    my ($self, $kind, $name) = @_;
+    
+    my $result = $self->send_command(undef, 'get', $kind, $name, '-o=json');
+    if ($result->success) {
+      return $self->_k8s->struct_to_object($kube_kind_to_kube_class->{ $kind }, $result->json);
     } else {
-      $response->PhysicalResourceId($id);
-      $response->Status('SUCCESS');
-      $response->Data({
-        Name => $name,
-      });
+      return undef;
     }
-  }
-
-  sub update_resource {
-    my ($self, $request, $response) = @_;
-    #$self->send_command('apply', ...);
   }
 
   sub make_physical_resource_id {
@@ -92,16 +74,65 @@ package Kubernetes::CloudFormation::Worker {
     return @parts;
   }
 
-  sub delete_resource {
+  sub create_resource {
     my ($self, $request, $response) = @_;
 
-    my ($type, $uid, $name) = $self->split_physical_resource_id($request->PhysicalResourceId);
-    my $result = $self->send_command(undef, 'delete', $type, $name);
+    my $kube_kind = $cf_type_to_kube_kind->{ $request->ResourceType };
+    my $kube_class = $kube_kind_to_kube_class->{ $kube_kind };
+
+    # TODO: this should be transmitted to the user
+    die "Unknown resource type " . $request->ResourceType if (not defined $kube_kind);
+
+    my $object = $self->_k8s->struct_to_object($kube_class, $request->ResourceProperties);
+
+    # TODO: validate kind
+    my $name = $object->metadata->name;
+
+    my $json = $self->_k8s->object_to_json($object);
+    my $result = $self->send_command($json, 'create', '-f', '-');
+
     if (not $result->success) {
       $response->Status('FAILED');
       $response->Reason($result->output);
     } else {
+      my $new_object = $self->get_object_from_kubernetes($kube_kind, $name);
+
+      my $id = $self->make_physical_resource_id($kube_kind, $new_object->metadata->uid, $name);
+
+      $response->PhysicalResourceId($id);
       $response->Status('SUCCESS');
+      $response->Data({
+        Name => $name,
+      });
+    }
+  }
+
+  sub update_resource {
+    my ($self, $request, $response) = @_;
+    #$self->send_command('apply', ...);
+  }
+
+  sub delete_resource {
+    my ($self, $request, $response) = @_;
+
+    my ($type, $uid, $name) = $self->split_physical_resource_id($request->PhysicalResourceId);
+
+    if (my $object = $self->get_object_from_kubernetes($type, $name)) {
+      if ($object->metadata->uid ne $uid) {
+        $response->Status('FAILED');
+        $response->Reason('Found object with a different Kubernetes UID than expected. Not deleting');
+      } else {
+        my $result = $self->send_command(undef, 'delete', $type, $name);
+        if (not $result->success) {
+          $response->Status('FAILED');
+          $response->Reason($result->output);
+        } else {
+          $response->Status('SUCCESS');
+        }
+      }
+    } else {
+      $response->Status('FAILED');
+      $response->Reason("Can't find $type with name $name and uid $uid for deletion");
     }
   } 
 
