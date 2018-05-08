@@ -9,10 +9,12 @@ package Kubernetes::CloudFormation::Worker {
   our $cf_type_to_kube_kind = {
     'Custom::KubernetesService' => 'Service',
     'Custom::KubernetesReplicaset' => 'ReplicaSet',
+    'Custom::KubernetesDeployment' => 'Deployment',
   };
   our $kube_kind_to_kube_class = {
      'Service' => 'IO::K8s::Api::Core::V1::Service',
      'ReplicaSet', 'IO::K8s::Api::Apps::V1::ReplicaSet',
+     'Deployment' => 'IO::K8s::Api::Extensions::V1beta1::Deployment',
   };
 
   has _k8s => (is => 'ro', isa => 'IO::K8s', default => sub { IO::K8s->new });
