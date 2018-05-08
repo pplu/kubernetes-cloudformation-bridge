@@ -51,9 +51,15 @@ package Kubernetes::CloudFormation::Worker {
 
     # TODO: this should be transmitted to the user
     die "Unknown resource type " . $request->ResourceType if (not defined $kube_kind);
-    # TODO: validate kind
 
     my $rp_hash = $request->ResourceProperties;
+
+    if (not exists $rp_hash->{ kind }) {
+      $rp_hash->{ kind } = $kube_kind;
+    } elsif ($rp_hash->{ kind } ne $kube_kind) {
+      $response->set_failed('The resource type and the kind of resource are not in sync');
+      return;
+    }
 
     if (not defined $rp_hash->{ metadata } or not defined $rp_hash->{ metadata }->{ name }) {
       $rp_hash->{ metadata }->{ generateName } = lc($request->LogicalResourceId);
