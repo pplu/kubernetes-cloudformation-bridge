@@ -49,11 +49,15 @@ package Kubernetes::CloudFormation::Worker {
 
     # TODO: this should be transmitted to the user
     die "Unknown resource type " . $request->ResourceType if (not defined $kube_kind);
+    # TODO: validate kind
+
+    my $rp_hash = $request->ResourceProperties;
+
+    if (not defined $rp_hash->{ metadata } or not defined $rp_hash->{ metadata }->{ name }) {
+      $rp_hash->{ metadata }->{ generateName } = lc($request->LogicalResourceId);
+    }
 
     my $object = $self->_k8s->struct_to_object($kube_class, $request->ResourceProperties);
-
-    # TODO: validate kind
-    my $name = $object->metadata->name;
 
     my $json = $self->_k8s->object_to_json($object);
     my $result = $self->_kube->input($json, 'create', '-f', '-');
@@ -61,6 +65,8 @@ package Kubernetes::CloudFormation::Worker {
     if (not $result->success) {
       $response->set_failed($result->output);
     } else {
+      my ($name) = ($result->output =~ m/^.* "(.*)" created/);
+      die "Couldn't get created object name from " . $result->output if (not defined $name);
       my $new_object = $self->get_object_from_kubernetes($kube_kind, $name);
 
       my $id = $self->make_physical_resource_id($kube_kind, $new_object->metadata->uid, $name);
