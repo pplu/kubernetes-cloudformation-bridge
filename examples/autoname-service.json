@@ -1,0 +1,28 @@
+{
+  "Parameters": {
+    "ServiceToken": {
+      "Type": "String",
+      "Description": "The service token that has to be used in the custom resources"
+    }
+  },
+  "Resources": {
+    "MySvc": {
+      "Type": "Custom::KubernetesService",
+      "Version": "1.0",
+      "Properties": {
+        "ServiceToken": { "Ref": "ServiceToken" },
+        "kind": "Service",
+        "apiVersion": "v1",
+        "spec":{
+          "selector": {
+            "app": "MyApp"
+          },
+          "ports": [ {
+            "protocol": "TCP",
+            "port": 80
+          } ]
+        }
+      }
+    }
+  }
+}

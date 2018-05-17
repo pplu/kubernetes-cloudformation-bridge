@@ -1,0 +1,35 @@
+{
+  "Parameters": {
+    "ServiceToken": {
+      "Type": "String",
+      "Description": "The service token that has to be used in the custom resources"
+    }
+  },
+  "Resources": {
+    "MyRS": {
+      "Type": "Custom::KubernetesDeployment",
+      "Version": "1.0",
+      "Properties": {
+        "ServiceToken": { "Ref": "ServiceToken" },
+        "apiVersion": "extensions/v1beta1",
+        "spec": {
+          "replicas": 3,
+          "template": {
+            "metadata": { "labels": { "app": "MyApp" } },
+            "spec": {
+              "containers":[
+                {
+                  "name": "frontend",
+                  "image": "gcr.io/google_samples/gb-frontend:v3",
+                  "ports": [
+                    { "containerPort": 80 }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

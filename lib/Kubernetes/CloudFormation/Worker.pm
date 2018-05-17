@@ -1,62 +1,29 @@
-package KubeCtl::Result {
-  use Moose;
-  use JSON::MaybeXS;
-  has output => (is => 'ro', isa => 'Str');
-  has rc => (is => 'ro', isa => 'Int', required => 1);
-  has json => (is => 'ro', isa => 'HashRef', lazy => 1, default => sub {
-    my $self = shift;
-    return decode_json($self->output);
-  });
-  
-  has success => (is => 'ro', isa => 'Bool', lazy => 1, default => sub {
-    my $self = shift;
-    return $self->rc == 0;
-  });
-}
 package Kubernetes::CloudFormation::Worker {
   our $VERSION = '0.01';
   use Moose;
   with 'SQS::Worker', 'SQS::Worker::SNS', 'SQS::Worker::CloudFormationResource';
 
-  use IPC::Open3;
-
-  has kubectl => (is => 'ro', isa => 'Str', default => 'kubectl');
-
-  sub send_command {
-    my ($self, $input, @kubectl_params) = @_;
-   
-    my ($in, $out, $err);
-    my $pid = open3($in, $out, $err, $self->kubectl, @kubectl_params);
-    print $in $input if (defined $input);
-    close $in;
-    my $output = join '', <$out>;
-
-    waitpid( $pid, 0 );
-    my $rc = $? >> 8;
-
-    return KubeCtl::Result->new(
-      rc => $rc,
-      output => $output
-    );
-  }
-
+  use Kubectl::CLIWrapper;
   use IO::K8s;
 
   our $cf_type_to_kube_kind = {
     'Custom::KubernetesService' => 'Service',
     'Custom::KubernetesReplicaset' => 'ReplicaSet',
+    'Custom::KubernetesDeployment' => 'Deployment',
   };
   our $kube_kind_to_kube_class = {
      'Service' => 'IO::K8s::Api::Core::V1::Service',
      'ReplicaSet', 'IO::K8s::Api::Apps::V1::ReplicaSet',
+     'Deployment' => 'IO::K8s::Api::Extensions::V1beta1::Deployment',
   };
 
   has _k8s => (is => 'ro', isa => 'IO::K8s', default => sub { IO::K8s->new });
+  has _kube => (is => 'ro', isa => 'Kubectl::CLIWrapper', default => sub { Kubectl::CLIWrapper->new });
 
   sub get_object_from_kubernetes {
     my ($self, $kind, $name) = @_;
     
-    my $result = $self->send_command(undef, 'get', $kind, $name, '-o=json');
+    my $result = $self->_kube->json('get', $kind, $name);
     if ($result->success) {
       return $self->_k8s->struct_to_object($kube_kind_to_kube_class->{ $kind }, $result->json);
     } else {
@@ -85,17 +52,29 @@ package Kubernetes::CloudFormation::Worker {
     # TODO: this should be transmitted to the user
     die "Unknown resource type " . $request->ResourceType if (not defined $kube_kind);
 
+    my $rp_hash = $request->ResourceProperties;
+
+    if (not exists $rp_hash->{ kind }) {
+      $rp_hash->{ kind } = $kube_kind;
+    } elsif ($rp_hash->{ kind } ne $kube_kind) {
+      $response->set_failed('The resource type and the kind of resource are not in sync');
+      return;
+    }
+
+    if (not defined $rp_hash->{ metadata } or not defined $rp_hash->{ metadata }->{ name }) {
+      $rp_hash->{ metadata }->{ generateName } = lc($request->LogicalResourceId);
+    }
+
     my $object = $self->_k8s->struct_to_object($kube_class, $request->ResourceProperties);
 
-    # TODO: validate kind
-    my $name = $object->metadata->name;
-
     my $json = $self->_k8s->object_to_json($object);
-    my $result = $self->send_command($json, 'create', '-f', '-');
+    my $result = $self->_kube->input($json, 'create', '-f', '-');
 
     if (not $result->success) {
       $response->set_failed($result->output);
     } else {
+      my ($name) = ($result->output =~ m/^.* "(.*)" created/);
+      die "Couldn't get created object name from " . $result->output if (not defined $name);
       my $new_object = $self->get_object_from_kubernetes($kube_kind, $name);
 
       my $id = $self->make_physical_resource_id($kube_kind, $new_object->metadata->uid, $name);
@@ -110,7 +89,7 @@ package Kubernetes::CloudFormation::Worker {
 
   sub update_resource {
     my ($self, $request, $response) = @_;
-    #$self->send_command('apply', ...);
+    #$self->_kube->input($json, 'apply', ...);
   }
 
   sub delete_resource {
@@ -122,7 +101,7 @@ package Kubernetes::CloudFormation::Worker {
       if ($object->metadata->uid ne $uid) {
         $response->set_failed('Found object with a different Kubernetes UID than expected. Not deleting');
       } else {
-        my $result = $self->send_command(undef, 'delete', $type, $name);
+        my $result = $self->_kube->run('delete', $type, $name);
         if (not $result->success) {
           $response->set_failed($result->output);
         } else {

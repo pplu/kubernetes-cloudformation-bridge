@@ -1,5 +1,6 @@
 #requires 'SQS::Worker::CloudFormationResource';
-requires 'IO::K8s';
+requires 'IO::K8s', '0.02';
+requires 'Kubectl::CLIWrapper';
 
 on 'develop' => sub {
   requires 'Dist::Zilla';
