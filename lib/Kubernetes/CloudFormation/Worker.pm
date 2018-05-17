@@ -89,7 +89,10 @@ package Kubernetes::CloudFormation::Worker {
 
   sub update_resource {
     my ($self, $request, $response) = @_;
-    #$self->_kube->input($json, 'apply', ...);
+    # For updates, we invoke the same code as a create. This will make CloudFormation recieve a new ResourceId,
+    # meaning this is a replacement. Later, when everything is complete, CloudFormation will send a delete for
+    # the old resource. Any change to a resource will be a replacement.
+    $self->create_resource($request, $response);
   }
 
   sub delete_resource {
