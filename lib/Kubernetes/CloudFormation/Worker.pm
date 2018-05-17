@@ -62,7 +62,7 @@ package Kubernetes::CloudFormation::Worker {
     }
 
     if (not defined $rp_hash->{ metadata } or not defined $rp_hash->{ metadata }->{ name }) {
-      $rp_hash->{ metadata }->{ generateName } = lc($request->LogicalResourceId);
+      $rp_hash->{ metadata }->{ generateName } = lc($request->LogicalResourceId) . '-';
     }
 
     my $object = $self->_k8s->struct_to_object($kube_class, $request->ResourceProperties);
